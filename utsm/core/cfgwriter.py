@@ -52,12 +52,19 @@ def cvar_token(name: str) -> str:
 def download_url(profile: Profile) -> str:
     """The ``sv_dlURL`` for a profile using the built-in download server.
 
-    Computed here rather than stored on the profile. A stored URL goes stale the
-    moment the machine's address changes or the download server stops, and the
-    server would keep advertising an address nothing answers on -- which looks
-    to a joining player exactly like a broken custom map.
+    Written **without a scheme**. The client supplies ``http://`` itself, as the
+    shipped documentation shows -- an ``sv_dlURL`` of ``yoursite.com/maps`` is
+    described as fetching from ``http://www.yoursite.com/maps/q3ut4/<map>.pk3``.
+    Including the scheme here produces ``http://http://host:port/...`` and the
+    download fails. Every public server observed omits it too, using values like
+    ``urbanterror.info`` or ``repo.sexyurban.net``.
+
+    Computed rather than stored on the profile: a stored URL goes stale as soon
+    as the machine's address changes or the download server stops, and the
+    server would carry on advertising an address nothing answers on -- which a
+    joining player sees as a broken custom map.
     """
-    return f"http://{profile.dl_host or local_ip()}:{profile.dl_port}"
+    return f"{profile.dl_host or local_ip()}:{profile.dl_port}"
 
 
 def render_cfg(profile: Profile) -> str:

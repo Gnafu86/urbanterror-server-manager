@@ -263,7 +263,7 @@ def test_download_page_builds_the_url_from_profile_fields(app, tmp_path):
     profile.dl_host = "play.example.com"
     page = DownloadPage()
     page.set_profile(profile, tmp_path)
-    assert page._url.text() == "http://play.example.com:9123"
+    assert page._url.text() == "play.example.com:9123"
 
 
 def test_download_page_note_is_plain_text(app, tmp_path):

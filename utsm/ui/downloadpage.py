@@ -277,7 +277,7 @@ class DownloadPage(QWidget):
         if self._profile is None:
             return
         host = self._profile.dl_host or httpd.local_ip()
-        self._url.setText(f"http://{host}:{self._profile.dl_port}")
+        self._url.setText(f"{host}:{self._profile.dl_port}")
 
     # -- Map management -----------------------------------------------------
 
