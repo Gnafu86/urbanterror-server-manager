@@ -67,6 +67,35 @@ records each download.
 > plain text. Directory traversal is rejected and directory listings are not
 > produced.
 
+### Map pack naming
+
+A pack must be named after the map it contains — `ut4_mymap.pk3` for
+`ut4_mymap` — or clients will not download it. This is enforced by the client
+rather than by convention. `CL_FirstDownload` reduces the list of required
+packs to the single entry matching the current map and discards the rest:
+
+```c
+s = strstr(clc.downloadList, va("/%s.pk3@", clc.mapname));
+if (s) { /* keep it */ }
+else   { clc.downloadList[0] = '\0'; }
+```
+
+A pack named anything else is dropped before a request is issued, so no
+download is attempted and the player is informed only that the `.bsp` is
+missing.
+
+Single-map packs are therefore renamed on import. Two cases cannot be resolved
+automatically and are flagged in the map list:
+
+| Case | Consequence |
+| --- | --- |
+| A pack containing several maps | One filename cannot match several map names. Repack as one map per `.pk3`. |
+| A map name beginning with `z` | Never auto-downloaded; the client restricts the first letter to `a`–`y`. Players must install it manually. |
+
+Players are shown a confirmation before any download begins — *"If you trust
+data from this server… press ANY key"*. This is mandatory and cannot be
+disabled from the server.
+
 ![Custom maps](docs/screenshot-custom-maps.png)
 
 ---
