@@ -245,14 +245,32 @@ def test_download_page_shows_installed_packs(app, tmp_path):
 
     mod = tmp_path / "q3ut4"
     mod.mkdir(parents=True)
-    with zipfile.ZipFile(mod / "pack.pk3", "w") as z:
+    # Named after the map it holds, which is what a client will download.
+    with zipfile.ZipFile(mod / "ut4_custom.pk3", "w") as z:
         z.writestr("maps/ut4_custom.bsp", b"BSP\x00")
 
     page = DownloadPage()
     page.set_profile(Profile(), mod)
     assert page._table.rowCount() == 1
-    assert page._table.item(0, 0).text() == "pack.pk3"
+    assert page._table.item(0, 0).text() == "ut4_custom.pk3"
     assert "ut4_custom" in page._table.item(0, 2).text()
+
+
+def test_download_page_flags_a_pack_clients_cannot_download(app, tmp_path):
+    """A misnamed pack is silently dropped by the client, so say so."""
+    import zipfile
+    from utsm.ui.downloadpage import DownloadPage
+
+    mod = tmp_path / "q3ut4"
+    mod.mkdir(parents=True)
+    with zipfile.ZipFile(mod / "wrongname.pk3", "w") as z:
+        z.writestr("maps/ut4_thing.bsp", b"BSP\x00")
+
+    page = DownloadPage()
+    page.set_profile(Profile(), mod)
+    assert "⚠" in page._table.item(0, 0).text()
+    assert "ut4_thing.pk3" in page._table.item(0, 0).toolTip()
+    assert "cannot be auto-downloaded" in page._maps_summary.text()
 
 
 def test_download_page_builds_the_url_from_profile_fields(app, tmp_path):
@@ -263,7 +281,7 @@ def test_download_page_builds_the_url_from_profile_fields(app, tmp_path):
     profile.dl_host = "play.example.com"
     page = DownloadPage()
     page.set_profile(profile, tmp_path)
-    assert page._url.text() == "play.example.com:9123"
+    assert page._url.text() == "http://play.example.com:9123"
 
 
 def test_download_page_note_is_plain_text(app, tmp_path):

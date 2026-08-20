@@ -52,19 +52,18 @@ def cvar_token(name: str) -> str:
 def download_url(profile: Profile) -> str:
     """The ``sv_dlURL`` for a profile using the built-in download server.
 
-    Written **without a scheme**. The client supplies ``http://`` itself, as the
-    shipped documentation shows -- an ``sv_dlURL`` of ``yoursite.com/maps`` is
-    described as fetching from ``http://www.yoursite.com/maps/q3ut4/<map>.pk3``.
-    Including the scheme here produces ``http://http://host:port/...`` and the
-    download fails. Every public server observed omits it too, using values like
-    ``urbanterror.info`` or ``repo.sexyurban.net``.
+    Written **with** the scheme. The engine builds the download address as
+    ``va("%s/%s", clc.sv_dlURL, remoteName)`` and hands the result straight to
+    ``CURLOPT_URL`` without adding one, so what is written here is what cURL
+    receives. Bare hostnames work only because libcurl assumes http; with a port
+    the explicit form leaves no room for ambiguity.
 
     Computed rather than stored on the profile: a stored URL goes stale as soon
     as the machine's address changes or the download server stops, and the
     server would carry on advertising an address nothing answers on -- which a
     joining player sees as a broken custom map.
     """
-    return f"{profile.dl_host or local_ip()}:{profile.dl_port}"
+    return f"http://{profile.dl_host or local_ip()}:{profile.dl_port}"
 
 
 def render_cfg(profile: Profile) -> str:

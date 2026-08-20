@@ -226,20 +226,31 @@ class DownloadPage(QWidget):
             return
         packs = maps.list_custom(self._mod_dir)
         self._table.setRowCount(len(packs))
+        problems = 0
         for row, pack in enumerate(packs):
             inside = ", ".join(pack.maps) if pack.maps else "no maps (assets only)"
+            problem = pack.download_problem()
+            if problem:
+                problems += 1
             for col, text in enumerate((pack.name, pack.size_label, inside)):
                 item = QTableWidgetItem(text)
                 if col == 0:
                     item.setData(Qt.ItemDataRole.UserRole, str(pack.path))
-                    item.setToolTip(f"Players fetch this from {pack.download_path}")
+                    item.setToolTip(
+                        problem or f"Players fetch this from {pack.download_path}"
+                    )
+                    if problem:
+                        item.setText(f"⚠  {text}")
                 self._table.setItem(row, col, item)
 
         total = sum(len(p.maps) for p in packs)
-        self._maps_summary.setText(
+        summary = (
             f"{len(packs)} pack{'s' if len(packs) != 1 else ''}, {total} map"
             f"{'s' if total != 1 else ''}"
         )
+        if problems:
+            summary += f"  ·  ⚠ {problems} cannot be auto-downloaded (hover for why)"
+        self._maps_summary.setText(summary)
 
     def set_server_state(self, running: bool, port: int = 0) -> None:
         self._refresh_url()
@@ -277,7 +288,7 @@ class DownloadPage(QWidget):
         if self._profile is None:
             return
         host = self._profile.dl_host or httpd.local_ip()
-        self._url.setText(f"{host}:{self._profile.dl_port}")
+        self._url.setText(f"http://{host}:{self._profile.dl_port}")
 
     # -- Map management -----------------------------------------------------
 

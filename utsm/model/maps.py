@@ -147,6 +147,41 @@ class CustomPk3:
         """Where a client will ask for this pack, relative to ``sv_dlURL``."""
         return f"/{self.path.parent.name}/{self.path.name}"
 
+    def download_problem(self) -> str:
+        """Why a client would refuse to auto-download this pack, if it would.
+
+        Empty when the pack is fine.
+        """
+        if not self.maps:
+            return ""
+        stem = self.path.stem
+        if len(self.maps) > 1:
+            others = [m for m in self.maps if m != stem]
+            if stem in self.maps:
+                return (
+                    f"Only '{stem}' can be auto-downloaded from this pack. Players "
+                    f"missing {', '.join(others)} will not be able to join, because "
+                    "a client only downloads a pack named after the map it needs."
+                )
+            return (
+                f"None of the {len(self.maps)} maps in this pack can be "
+                "auto-downloaded: a client only downloads a pack named after the "
+                "map it needs, and one file cannot match several names. Repack "
+                "them one map per .pk3."
+            )
+        only = self.maps[0]
+        if stem != only:
+            return (
+                f"This pack must be named '{only}.pk3' for players to be able to "
+                f"download it; it is currently '{self.path.name}'."
+            )
+        if not autodownloadable(only):
+            return (
+                f"Maps whose name starts with '{only[0]}' are never auto-downloaded "
+                "by the client. Players must install this map by hand."
+            )
+        return ""
+
 
 def list_custom(mod_dir: Path) -> list[CustomPk3]:
     """Every .pk3 a profile carries of its own, newest name order."""
@@ -163,12 +198,43 @@ class MapInstallError(Exception):
     """A .pk3 could not be added."""
 
 
-def install_pk3(source: Path, mod_dir: Path, overwrite: bool = False) -> Path:
+#: Map names the client refuses to auto-download, whatever the pack is called.
+#: ``CL_FirstDownload`` only proceeds when the first letter of the map name is
+#: a-y or A-Y; ``z`` is excluded because the base game's own packs are z-prefixed.
+def autodownloadable(map_name: str) -> bool:
+    first = (map_name or " ")[0]
+    return ("a" <= first <= "y") or ("A" <= first <= "Y")
+
+
+def expected_pack_name(map_name: str) -> str:
+    """The only filename a client will auto-download this map from."""
+    return f"{map_name}.pk3"
+
+
+def install_pk3(
+    source: Path,
+    mod_dir: Path,
+    overwrite: bool = False,
+    rename_for_download: bool = True,
+) -> Path:
     """Copy a .pk3 into a profile's mod directory.
 
-    The name is preserved, because the client asks for the pak by the exact
-    filename the server advertises. Renaming it here would make the download
-    404 for every joining player.
+    A single-map pack is renamed to ``<mapname>.pk3``, because that is the only
+    name a client will auto-download it under. The client builds the list of
+    packs it needs from ``sv_referencedPakNames``, then in ``CL_FirstDownload``
+    keeps only the entry matching ``/<mapname>.pk3@`` and discards the rest::
+
+        s = strstr(clc.downloadList, va("/%s.pk3@", clc.mapname));
+        if (s) { ...keep it... }
+        else { clc.downloadList[0] = '\\0'; }
+
+    So a pack called ``mymap_v2.pk3`` or ``mymap_autopacked.pk3`` is dropped
+    from the list, no request is ever made, and the player is told only that
+    the .bsp is missing. Renaming on the way in is what makes auto-download
+    work at all.
+
+    Multi-map packs cannot be renamed to suit every map they hold; the caller is
+    expected to warn about that.
     """
     source = Path(source)
     mod_dir = Path(mod_dir)
@@ -183,7 +249,13 @@ def install_pk3(source: Path, mod_dir: Path, overwrite: bool = False) -> Path:
         )
 
     mod_dir.mkdir(parents=True, exist_ok=True)
-    target = mod_dir / source.name
+
+    name = source.name
+    if rename_for_download:
+        contained = sorted(scan_pk3(source))
+        if len(contained) == 1:
+            name = expected_pack_name(contained[0])
+    target = mod_dir / name
 
     if target.exists() and not overwrite:
         raise MapInstallError(f"{source.name} is already installed.")

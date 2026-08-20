@@ -216,13 +216,45 @@ def test_local_ip_is_an_address():
 
 # -- Installing custom maps --------------------------------------------------
 
-def test_install_pk3_copies_and_keeps_the_name(tmp_path):
-    """The client asks for the exact filename the server advertises."""
-    source = make_pk3(tmp_path / "incoming" / "ut4_mymap.pk3")
+def test_install_pk3_renames_to_the_map_it_contains(tmp_path):
+    """A client only auto-downloads a pack named after the map it needs.
+
+    CL_FirstDownload keeps only the download-list entry matching
+    "/<mapname>.pk3@" and discards everything else, so a pack called
+    anything else is silently dropped and never requested.
+    """
+    source = make_pk3(tmp_path / "incoming" / "mymap_autopacked.pk3", ("ut4_mymap",))
     mod = tmp_path / "profile" / "q3ut4"
     installed = maps.install_pk3(source, mod)
-    assert installed == mod / "ut4_mymap.pk3"
+    assert installed.name == "ut4_mymap.pk3"
     assert installed.read_bytes() == source.read_bytes()
+
+
+def test_install_pk3_leaves_a_correctly_named_pack_alone(tmp_path):
+    source = make_pk3(tmp_path / "incoming" / "ut4_mymap.pk3", ("ut4_mymap",))
+    mod = tmp_path / "profile" / "q3ut4"
+    assert maps.install_pk3(source, mod).name == "ut4_mymap.pk3"
+
+
+def test_install_pk3_keeps_the_name_of_a_multi_map_pack(tmp_path):
+    """One filename cannot match several map names."""
+    source = make_pk3(tmp_path / "incoming" / "pack.pk3", ("ut4_a", "ut4_b"))
+    mod = tmp_path / "profile" / "q3ut4"
+    assert maps.install_pk3(source, mod).name == "pack.pk3"
+
+
+def test_download_problem_explains_each_case(tmp_path):
+    mod = tmp_path / "q3ut4"
+    make_pk3(mod / "ut4_good.pk3", ("ut4_good",))
+    make_pk3(mod / "wrongname.pk3", ("ut4_thing",))
+    make_pk3(mod / "many.pk3", ("ut4_one", "ut4_two"))
+    make_pk3(mod / "zmap.pk3", ("zmap",))
+    by_name = {p.name: p for p in maps.list_custom(mod)}
+
+    assert by_name["ut4_good.pk3"].download_problem() == ""
+    assert "must be named 'ut4_thing.pk3'" in by_name["wrongname.pk3"].download_problem()
+    assert "one map per .pk3" in by_name["many.pk3"].download_problem()
+    assert "never auto-downloaded" in by_name["zmap.pk3"].download_problem()
 
 
 def test_install_pk3_rejects_a_non_pk3(tmp_path):

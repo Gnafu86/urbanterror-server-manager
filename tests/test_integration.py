@@ -277,7 +277,7 @@ def test_download_url_is_generated_not_stored(tmp_path, monkeypatch):
     p.dl_port = 8123
 
     line = next(l for l in cfgwriter.render_cfg(p).splitlines() if "sv_dlURL" in l)
-    assert line == 'sets sv_dlURL "play.example.com:8123"'
+    assert line == 'sets sv_dlURL "http://play.example.com:8123"'
     # Nothing was written back to the profile.
     assert "sv_dlURL" not in p.settings
 
@@ -288,9 +288,9 @@ def test_download_url_follows_a_changed_port(tmp_path, monkeypatch):
     p.dl_enabled = True
     p.dl_host = "example.com"
     p.dl_port = 8000
-    assert 'sets sv_dlURL "example.com:8000"' in cfgwriter.render_cfg(p)
+    assert 'sets sv_dlURL "http://example.com:8000"' in cfgwriter.render_cfg(p)
     p.dl_port = 9999
-    assert 'sets sv_dlURL "example.com:9999"' in cfgwriter.render_cfg(p)
+    assert 'sets sv_dlURL "http://example.com:9999"' in cfgwriter.render_cfg(p)
 
 
 def test_manual_download_url_is_kept_when_builtin_server_is_off(tmp_path, monkeypatch):
@@ -376,7 +376,7 @@ def test_allowdownload_off_is_passed_through(tmp_path, monkeypatch):
     )
 
 
-def test_download_url_has_no_scheme(tmp_path, monkeypatch):
+def test_download_url_carries_the_scheme(tmp_path, monkeypatch):
     """The client prepends http:// itself.
 
     server_example.cfg describes an sv_dlURL of 'yoursite.com/maps' as being
@@ -390,6 +390,6 @@ def test_download_url_has_no_scheme(tmp_path, monkeypatch):
     p.dl_host = "example.com"
     p.dl_port = 8000
 
-    url = cfgwriter.download_url(p)
-    assert not url.startswith("http"), f"sv_dlURL must not carry a scheme: {url}"
-    assert url == "example.com:8000"
+    # The engine does va("%s/%s", sv_dlURL, remoteName) and passes the result
+    # straight to CURLOPT_URL, so the scheme has to be here.
+    assert cfgwriter.download_url(p) == "http://example.com:8000"
