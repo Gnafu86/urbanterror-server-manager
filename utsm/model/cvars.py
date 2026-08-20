@@ -605,17 +605,18 @@ def defaults() -> dict[str, Any]:
 
 #: Cvars the manager passes on the command line rather than writing into the
 #: config, because the engine only honours them at startup.
-COMMAND_LINE_ONLY = frozenset({"net_port", "dedicated"})
-
-#: Server variables whose configured value this build of Urban Terror does not
-#: keep. They are written to the config as normal -- exactly as
-#: ``server_example.cfg`` does -- but the running server may report a different
-#: value, so the manager checks them once the server is up and warns rather than
-#: letting the difference go unnoticed.
 #:
-#: ``sv_allowdownload`` reverts to ``0`` here whatever is done to it: before the
-#: map line, after it, on the command line, and under either spelling. The
-#: gamecode registers it (the name appears in ``qagame.qvm``), which is the
-#: likely cause. It gates client downloads, so a server that silently has it off
-#: leaves players unable to join a custom map.
-UNRELIABLE_CVARS = frozenset({"sv_allowdownload"})
+#: ``sv_allowdownload`` belongs here even though ``server_example.cfg`` sets it
+#: like any other variable. In this build a config assignment is silently
+#: discarded -- no error, the value simply reverts to ``0`` -- whether it is
+#: written before the map line, after it, or under either spelling, and a
+#: console ``set`` on the running server is ignored too. Only ``+set`` at launch
+#: takes effect. Measured on a fresh profile:
+#:
+#:     +set sv_allowdownload 1  -> 1
+#:     config only              -> 0
+#:
+#: It gates client downloads, so getting this wrong leaves players unable to
+#: join a server running a custom map, with the client reporting only a missing
+#: .bsp file.
+COMMAND_LINE_ONLY = frozenset({"net_port", "dedicated", "sv_allowdownload"})

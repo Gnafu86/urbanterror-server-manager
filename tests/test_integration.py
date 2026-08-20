@@ -346,3 +346,31 @@ def test_status_query_reports_map_change(profile):
     finally:
         server.kill()
         server.wait(timeout=10)
+
+
+def test_allowdownload_goes_on_the_command_line(tmp_path, monkeypatch):
+    """A config assignment is silently discarded by this build.
+
+    Measured against the real server: '+set sv_allowdownload 1' yields 1, while
+    the same assignment in the config yields 0 -- with no error either way. It
+    gates client downloads, so getting it wrong leaves players unable to join a
+    custom map.
+    """
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+    p = Profile()
+    p.set("sv_allowdownload", True)
+
+    joined = " ".join(cfgwriter.launch_args(p, Path("/opt/urbanterror")))
+    assert "+set sv_allowdownload 1" in joined
+
+    # And it must not be written to the config, where it would do nothing.
+    assert "sv_allowdownload" not in cfgwriter.render_cfg(p)
+
+
+def test_allowdownload_off_is_passed_through(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+    p = Profile()
+    p.set("sv_allowdownload", False)
+    assert "+set sv_allowdownload 0" in " ".join(
+        cfgwriter.launch_args(p, Path("/opt/urbanterror"))
+    )

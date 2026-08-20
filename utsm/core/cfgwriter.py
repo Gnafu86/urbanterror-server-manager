@@ -147,5 +147,8 @@ def launch_args(profile: Profile, install_basepath: Path) -> list[str]:
         "+set", "fs_game", paths.MOD_DIR,
         "+set", "dedicated", str(int(profile.get("dedicated") or 2)),
         "+set", "net_port", str(profile.net_port),
+        # Only takes effect here; a config assignment is silently discarded.
+        # See cvars.COMMAND_LINE_ONLY.
+        "+set", "sv_allowdownload", "1" if profile.get("sv_allowdownload") else "0",
         "+exec", cfg_filename(profile),
     ]
