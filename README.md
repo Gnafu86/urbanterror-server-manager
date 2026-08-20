@@ -4,6 +4,7 @@
 [![Release](https://github.com/Gnafu86/urbanterror-server-manager/actions/workflows/release.yml/badge.svg)](https://github.com/Gnafu86/urbanterror-server-manager/actions/workflows/release.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey)](#installation)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A desktop application for configuring, launching and administering Urban
 Terror 4.3 dedicated servers. All server variables are exposed through the
@@ -244,4 +245,8 @@ packaging/                PyInstaller specification and icon generation
 
 ## License
 
-Not yet specified.
+Released under the MIT License. See [LICENSE](LICENSE) for the full text.
+
+Urban Terror itself is not covered by this licence. It is a separate work by
+Frozen Sand, distributed under its own terms, and is neither included nor
+redistributed here.
