@@ -148,9 +148,12 @@ def test_launch_args_point_at_profile_homepath(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
     p = Profile()
     p.set("net_port", 27999)
-    args = cfgwriter.launch_args(p, Path("/opt/urbanterror"))
+    basepath = Path("/opt/urbanterror")
+    args = cfgwriter.launch_args(p, basepath)
     joined = " ".join(args)
-    assert "+set fs_basepath /opt/urbanterror" in joined
+    # Compare against the rendered Path, not a literal: the separator differs
+    # by platform and the assertion is about the argument, not about POSIX.
+    assert f"+set fs_basepath {basepath}" in joined
     assert str(paths.profile_home(p.id)) in joined
     assert "+set net_port 27999" in joined
     assert f"+exec {cfgwriter.cfg_filename(p)}" in joined

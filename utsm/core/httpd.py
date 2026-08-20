@@ -21,6 +21,7 @@ filename.
 from __future__ import annotations
 
 import socket
+import sys
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,6 +34,25 @@ from PySide6.QtCore import QObject, Signal
 ALLOWED_SUFFIX = ".pk3"
 
 DEFAULT_PORT = 8000
+
+WINDOWS = sys.platform.startswith("win")
+
+
+def _claim_port(sock: socket.socket) -> None:
+    """Apply the socket options that make a port clash fail loudly.
+
+    ``SO_REUSEADDR`` means opposite things on the two platforms. On Unix it only
+    permits rebinding a port stuck in TIME_WAIT, which is what a restarted
+    server wants. On Windows it permits binding a port another socket is
+    *actively listening on*, so two servers would silently share it and requests
+    would land unpredictably on either. Windows' ``SO_EXCLUSIVEADDRUSE`` asks
+    for the exclusive ownership Unix gives by default.
+    """
+    if WINDOWS:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
 
 def local_ip() -> str:
@@ -53,10 +73,14 @@ def local_ip() -> str:
 
 
 def port_available(port: int, host: str = "0.0.0.0") -> bool:
-    """Whether a TCP port can be bound right now."""
+    """Whether a TCP port can be bound right now.
+
+    Uses the same socket options as the real server, so the answer predicts what
+    an actual start would do rather than being a separate, looser check.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
+        _claim_port(sock)
         sock.bind((host, int(port)))
         return True
     except OSError:
@@ -193,6 +217,19 @@ class _Pk3Handler(BaseHTTPRequestHandler):
         """Silence the default stderr logging; output goes through _note."""
 
 
+class _DownloadHTTPServer(ThreadingHTTPServer):
+    """The listening socket, with port clashes made to fail on both platforms."""
+
+    daemon_threads = True
+    # socketserver applies this before bind; see _claim_port for why Windows
+    # must not get SO_REUSEADDR.
+    allow_reuse_address = not WINDOWS
+
+    def server_bind(self) -> None:
+        _claim_port(self.socket)
+        super().server_bind()
+
+
 class DownloadServer(QObject):
     """Runs the map download server on a background thread."""
 
@@ -244,7 +281,7 @@ class DownloadServer(QObject):
         )
 
         try:
-            httpd = ThreadingHTTPServer((host, int(port)), handler)
+            httpd = _DownloadHTTPServer((host, int(port)), handler)
         except OSError as exc:
             self.failed.emit(
                 f"Could not listen on port {port}: {exc}. "
@@ -252,7 +289,6 @@ class DownloadServer(QObject):
             )
             return False
 
-        httpd.daemon_threads = True
         self._httpd = httpd
         self._root = root
         self._port = httpd.server_address[1]
