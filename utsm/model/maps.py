@@ -86,6 +86,37 @@ def names(maps: list[GameMap]) -> list[str]:
 # so hand-written cycles survive a round-trip through this editor.
 
 
+@dataclass(frozen=True)
+class CycleEntry:
+    """One position in the rotation, optionally with its own gametype.
+
+    ``gametype`` of ``None`` means the map plays in the server's configured
+    gametype.
+    """
+
+    map_name: str
+    gametype: int | None = None
+
+    def to_dict(self) -> dict:
+        return {"map": self.map_name, "gametype": self.gametype}
+
+    @classmethod
+    def from_any(cls, value) -> "CycleEntry":
+        """Accept a bare map name or a stored entry.
+
+        Profiles written before per-map gametypes existed hold a plain list of
+        names, so those still load.
+        """
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            return cls(value)
+        if isinstance(value, dict):
+            gt = value.get("gametype")
+            return cls(str(value.get("map", "")), None if gt is None else int(gt))
+        return cls(str(value))
+
+
 def parse_cycle(text: str) -> list[str]:
     """Map names from a mapcycle file, ignoring comments and setting blocks."""
     out: list[str] = []
@@ -104,7 +135,15 @@ def parse_cycle(text: str) -> list[str]:
 
 
 def render_cycle(map_names: list[str]) -> str:
-    """A mapcycle file body for the given rotation."""
+    """A mapcycle file body for the given rotation.
+
+    Only map names are written. Per-map gametypes deliberately do not go in the
+    setting block here: ``g_gametype`` is latched, and the block runs after the
+    map has already loaded, so the value is accepted and then never applied.
+    Measured on 4.3.4 -- ``timelimit`` set in a block takes effect, while
+    ``g_gametype`` in the same block leaves the mode unchanged. The manager
+    applies gametypes itself, before the map changes, where they do take.
+    """
     if not map_names:
         return ""
     return "\n".join(map_names) + "\n"

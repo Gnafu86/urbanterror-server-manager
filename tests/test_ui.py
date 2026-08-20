@@ -212,11 +212,11 @@ def test_mapcycle_add_and_reorder(app):
 
     page._available_list.selectAll()
     page._add_selected()
-    assert page.cycle == ["ut4_casa", "ut4_abbey", "ut4_turnpike"]
+    assert [e.map_name for e in page.cycle] == ["ut4_casa", "ut4_abbey", "ut4_turnpike"]
 
     page._cycle_list.setCurrentRow(2)
     page._move(-1)
-    assert page.cycle == ["ut4_casa", "ut4_turnpike", "ut4_abbey"]
+    assert [e.map_name for e in page.cycle] == ["ut4_casa", "ut4_turnpike", "ut4_abbey"]
 
 
 def test_mapcycle_warns_when_start_map_is_outside_the_rotation(app):
@@ -234,7 +234,7 @@ def test_mapcycle_does_not_duplicate_entries(app):
     page.load(["ut4_casa"], "ut4_casa")
     page._available_list.selectAll()
     page._add_selected()
-    assert page.cycle == ["ut4_casa"]
+    assert [e.map_name for e in page.cycle] == ["ut4_casa"]
 
 
 # -- Custom maps and download server -----------------------------------------

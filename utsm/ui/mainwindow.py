@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import paths
-from ..core import cfgwriter, httpd
+from ..core import cfgwriter, cycle as cyclemod, httpd
 from ..core.channel import ChannelError, ControlChannel, NullChannel, RconChannel
 from ..core.httpd import DownloadServer
 from ..core.supervisor import ServerState, ServerSupervisor
@@ -59,6 +59,8 @@ class MainWindow(QMainWindow):
         self.store = ProfileStore(paths.profiles_file()).load()
         self.supervisors: dict[str, ServerSupervisor] = {}
         self.download_servers: dict[str, DownloadServer] = {}
+        #: Per-profile tracker that applies a rotation entry's own gametype.
+        self.gametype_schedulers: dict[str, cyclemod.GametypeScheduler] = {}
         self._current: Profile | None = None
         self._loading = False
 
@@ -448,9 +450,12 @@ class MainWindow(QMainWindow):
         if cycle_name:
             candidate = Path(path).parent / cycle_name
             if candidate.is_file():
-                profile.mapcycle = maps.parse_cycle(
-                    candidate.read_text(encoding="utf-8", errors="replace")
-                )
+                profile.mapcycle = [
+                    maps.CycleEntry(m)
+                    for m in maps.parse_cycle(
+                        candidate.read_text(encoding="utf-8", errors="replace")
+                    )
+                ]
 
         self.store.add(profile)
         self._save()
@@ -707,6 +712,7 @@ class MainWindow(QMainWindow):
         if self._current.dl_enabled:
             self._start_download_server(self._current)
 
+        self.gametype_schedulers.pop(self._current.id, None)
         self._tabs.setCurrentWidget(self._console)
         self._console.clear()
         self._supervisor_for(self._current).start(self._current)
@@ -762,8 +768,47 @@ class MainWindow(QMainWindow):
 
     # -- Server events ------------------------------------------------------
 
+    def _apply_cycle_gametype(self, profile: Profile, text: str) -> None:
+        """Set the gametype the next map in the rotation wants.
+
+        g_gametype is latched, so it has to be in place *before* the map
+        changes; setting it from the map cycle file does not work at all. See
+        utsm.core.cycle.
+        """
+        entries = profile.cycle_entries()
+        if not any(e.gametype is not None for e in entries):
+            return
+        map_name = cyclemod.map_from_output(text)
+        if not map_name:
+            return
+
+        scheduler = self.gametype_schedulers.setdefault(
+            profile.id, cyclemod.GametypeScheduler()
+        )
+        wanted = scheduler.on_map_loaded(map_name, entries, profile.gametype)
+        if wanted is None:
+            return
+
+        # Not gated on channel.available: the supervisor emits this output
+        # *before* it flips to RUNNING, so the very first map change would
+        # otherwise be skipped. The process is already up, so the write
+        # succeeds; ChannelError covers the case where it is not.
+        channel = self._channel_for(profile)
+        if channel is None:
+            return
+        try:
+            channel.set_cvar("g_gametype", str(wanted))
+        except ChannelError:
+            return
+        label = dict(cvars.GAMETYPES).get(wanted, str(wanted))
+        self.statusBar().showMessage(f"Next map will run in {label}.", 6000)
+
     def _on_server_output(self, text: str) -> None:
         sender = self.sender()
+        for profile in self.store.profiles:
+            if self.supervisors.get(profile.id) is sender:
+                self._apply_cycle_gametype(profile, text)
+                break
         # Only show output for the profile currently on screen.
         if self._current and self.supervisors.get(self._current.id) is sender:
             self._console.append(text)

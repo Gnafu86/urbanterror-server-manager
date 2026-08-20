@@ -66,10 +66,23 @@ def download_url(profile: Profile) -> str:
     return f"http://{profile.dl_host or local_ip()}:{profile.dl_port}"
 
 
+def start_gametype(profile: Profile) -> int:
+    """The gametype the server should boot in.
+
+    If the starting map has its own gametype in the rotation, that wins: the
+    manager cannot set a latched variable for a map that is already loading, so
+    it has to be right in the generated config.
+    """
+    for entry in profile.cycle_entries():
+        if entry.map_name == profile.start_map and entry.gametype is not None:
+            return entry.gametype
+    return profile.gametype
+
+
 def render_cfg(profile: Profile) -> str:
     """The full text of the server config for a profile."""
     lines: list[str] = [HEADER.format(name=sanitise(profile.name))]
-    gametype = profile.gametype
+    gametype = start_gametype(profile)
 
     for group in cvars.GROUPS:
         entries = [
@@ -82,7 +95,9 @@ def render_cfg(profile: Profile) -> str:
 
         body: list[str] = []
         for cvar in entries:
-            if cvar.name == "sv_dlURL" and profile.dl_enabled:
+            if cvar.name == "g_gametype":
+                value = str(gametype)
+            elif cvar.name == "sv_dlURL" and profile.dl_enabled:
                 value = download_url(profile)
             else:
                 value = cvar.to_cfg_value(profile.get(cvar.name))
@@ -135,7 +150,9 @@ def write(profile: Profile) -> Path:
 
     if profile.mapcycle:
         cycle_path = mod_dir / mapcycle_filename(profile)
-        cycle_path.write_text(maps.render_cycle(profile.mapcycle), encoding="utf-8")
+        cycle_path.write_text(
+            maps.render_cycle(profile.cycle_map_names()), encoding="utf-8"
+        )
 
     return cfg_path
 

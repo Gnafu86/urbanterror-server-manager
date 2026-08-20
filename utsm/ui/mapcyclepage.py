@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..model import maps
+from ..model import cvars, maps
+from ..model.maps import CycleEntry
 
 
 class MapCyclePage(QWidget):
@@ -109,6 +110,21 @@ class MapCyclePage(QWidget):
         self._cycle_list.itemDoubleClicked.connect(lambda _: self._remove_selected())
         right.addWidget(self._cycle_list)
 
+        gametype_row = QHBoxLayout()
+        gametype_row.setSpacing(8)
+        gametype_row.addWidget(QLabel("Gametype for selected:"))
+        self._gametype = QComboBox()
+        self._gametype.addItem("Server default", None)
+        for value, label in cvars.GAMETYPES:
+            self._gametype.addItem(label, value)
+        self._gametype.setToolTip(
+            "Give the selected maps their own gametype. The server switches to it "
+            "as that map loads and back afterwards."
+        )
+        self._gametype.activated.connect(self._apply_gametype)
+        gametype_row.addWidget(self._gametype, 1)
+        right.addLayout(gametype_row)
+
         cycle_buttons = QHBoxLayout()
         cycle_buttons.setSpacing(8)
         for text, handler in (
@@ -144,20 +160,49 @@ class MapCyclePage(QWidget):
         self._loading = False
         self._update_status()
 
-    def load(self, cycle: list[str], start_map: str) -> None:
+    def load(self, cycle: list, start_map: str) -> None:
         self._loading = True
         try:
             self._cycle_list.clear()
-            for name in cycle:
-                self._cycle_list.addItem(QListWidgetItem(name))
+            for entry in cycle:
+                self._cycle_list.addItem(self._make_item(entry))
             self._start.setCurrentText(start_map)
         finally:
             self._loading = False
         self._update_status()
 
+    @staticmethod
+    def _make_item(entry) -> QListWidgetItem:
+        # Accept a bare map name as well as an entry, matching Profile.
+        entry = CycleEntry.from_any(entry)
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, entry.map_name)
+        item.setData(Qt.ItemDataRole.UserRole + 1, entry.gametype)
+        MapCyclePage._label(item)
+        return item
+
+    @staticmethod
+    def _label(item: QListWidgetItem) -> None:
+        name = item.data(Qt.ItemDataRole.UserRole)
+        gt = item.data(Qt.ItemDataRole.UserRole + 1)
+        if gt is None:
+            item.setText(name)
+            item.setToolTip(f"{name} — plays in the server's own gametype")
+        else:
+            label = dict(cvars.GAMETYPES).get(int(gt), f"gametype {gt}")
+            item.setText(f"{name}    ·  {label}")
+            item.setToolTip(f"{name} — switches the server to {label} for this map")
+
     @property
-    def cycle(self) -> list[str]:
-        return [self._cycle_list.item(i).text() for i in range(self._cycle_list.count())]
+    def cycle(self) -> list[CycleEntry]:
+        out = []
+        for i in range(self._cycle_list.count()):
+            item = self._cycle_list.item(i)
+            out.append(CycleEntry(
+                item.data(Qt.ItemDataRole.UserRole),
+                item.data(Qt.ItemDataRole.UserRole + 1),
+            ))
+        return out
 
     # -- Editing ------------------------------------------------------------
 
@@ -171,19 +216,33 @@ class MapCyclePage(QWidget):
             item.setToolTip(f"{m.display_name}\nfrom {m.source.name}")
             self._available_list.addItem(item)
 
+    def _apply_gametype(self, _index: int) -> None:
+        """Give every selected rotation entry the chosen gametype."""
+        selected = self._cycle_list.selectedItems()
+        if not selected:
+            self._status.setText(
+                "Select one or more maps in the rotation first, then choose a gametype."
+            )
+            return
+        value = self._gametype.currentData()
+        for item in selected:
+            item.setData(Qt.ItemDataRole.UserRole + 1, value)
+            self._label(item)
+        self._emit_cycle()
+
     def _add_selected(self) -> None:
-        existing = set(self.cycle)
+        existing = {e.map_name for e in self.cycle}
         for item in self._available_list.selectedItems():
             if item.text() not in existing:
-                self._cycle_list.addItem(QListWidgetItem(item.text()))
+                self._cycle_list.addItem(self._make_item(CycleEntry(item.text())))
                 existing.add(item.text())
         self._emit_cycle()
 
     def _add_all(self) -> None:
-        existing = set(self.cycle)
+        existing = {e.map_name for e in self.cycle}
         for m in self._available:
             if m.name not in existing:
-                self._cycle_list.addItem(QListWidgetItem(m.name))
+                self._cycle_list.addItem(self._make_item(CycleEntry(m.name)))
         self._emit_cycle()
 
     def _remove_selected(self) -> None:
@@ -226,9 +285,13 @@ class MapCyclePage(QWidget):
         self.start_map_changed.emit(text.strip())
 
     def _update_status(self) -> None:
-        cycle = self.cycle
+        entries = self.cycle
+        cycle = [e.map_name for e in entries]
         start = self._start.currentText().strip()
         parts = [f"{len(cycle)} map{'s' if len(cycle) != 1 else ''} in rotation"]
+        overrides = sum(1 for e in entries if e.gametype is not None)
+        if overrides:
+            parts.append(f"{overrides} with their own gametype")
         if not cycle:
             parts.append("with an empty cycle the server replays the starting map")
         elif start and start not in cycle:

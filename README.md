@@ -38,7 +38,7 @@ interface, removing the need to edit `server.cfg` by hand or to compute the
 | **Latched variables** | Variables the engine applies only on map reload are labelled accordingly, so pending changes are not mistaken for applied ones. |
 | **Weapons and items** | `g_gear` is edited as a grid of weapons and equipment. The raw value remains visible and editable. |
 | **Voting** | `g_allowvote` is edited as a checklist of the 30 available votes. Votes that grant broad server control are identified separately. |
-| **Map rotation** | The map cycle is assembled from the maps actually present, determined by scanning the installed `.pk3` archives. |
+| **Map rotation** | The map cycle is assembled from the maps actually present, determined by scanning the installed `.pk3` archives. Any map may be given its own gametype. |
 | **Custom maps** | Per-server `.pk3` management, with an optional built-in HTTP server that supplies them to connecting clients. |
 | **Process control** | Start, stop and restart, plus map reload and cycle. Changes to non-latched variables are applied to a running server immediately. |
 | **Console** | The server console, with command history and tab completion over the engine and gamecode command sets. |
@@ -66,6 +66,34 @@ records each download.
 > contains the generated server configuration, which holds the rcon password in
 > plain text. Directory traversal is rejected and directory listings are not
 > produced.
+
+### Per-map gametypes
+
+Select maps in the rotation and assign a gametype; the rest keep the server's
+own. The server switches as that map loads and reverts afterwards.
+
+This cannot be expressed in the map cycle file, despite the file supporting
+per-map setting blocks. `g_gametype` is latched — accepted at any time, applied
+only when a map loads — and the block runs *after* the map has loaded, so the
+value is taken and never used. Measured on 4.3.4, a block setting `timelimit`
+takes effect while the same block setting `g_gametype` leaves the mode
+unchanged for the whole rotation:
+
+```
+map=ut4_casa      gametype=7 (CTF)   ← block said 8
+map=ut4_abbey     gametype=7 (CTF)   ← block said 4, timelimit 22 applied
+map=ut4_turnpike  gametype=7 (CTF)   ← block said 7, timelimit 33 applied
+```
+
+Setting it *before* the map changes does work, so the manager watches for map
+loads and applies the next map's gametype in advance. The latched value is then
+already in place when that map spawns: no extra reload, and players on the
+current map continue to see the mode they are playing. The starting map is
+handled by writing its gametype into the generated config, since nothing can be
+set in advance for a map that is already loading.
+
+A map reached outside the rotation — by vote, or an admin switching directly —
+leaves the gametype alone, because the map after it cannot be predicted.
 
 ### Map pack naming
 
@@ -266,6 +294,7 @@ utsm/core/channel.py      Administration commands and rcon transport
 utsm/core/query.py        UDP server queries and status parsing
 utsm/core/cfgwriter.py    Configuration and map cycle generation
 utsm/core/httpd.py        Map download server
+utsm/core/cycle.py        Per-map gametype as the rotation advances
 utsm/ui/                  Qt interface
 packaging/                PyInstaller specification and icon generation
 ```

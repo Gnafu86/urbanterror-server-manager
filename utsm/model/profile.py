@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from . import cvars, maps
+from .maps import CycleEntry
 
 LOCAL = "local"
 REMOTE = "remote"
@@ -47,7 +48,10 @@ class Profile:
 
     #: cvar name -> value, holding only what differs from the registry default.
     settings: dict[str, Any] = field(default_factory=dict)
-    mapcycle: list[str] = field(default_factory=list)
+    #: The rotation. Entries may carry their own gametype; see
+    #: :mod:`utsm.core.cycle` for why that is applied by the manager rather
+    #: than written into the map cycle file.
+    mapcycle: list[CycleEntry] = field(default_factory=list)
     start_map: str = "ut4_casa"
 
     #: Raw config lines appended verbatim after the generated ones.
@@ -97,6 +101,18 @@ class Profile:
             out[cvar.name if cvar else name] = cvar.coerce(value) if cvar else value
         return out
 
+    def cycle_entries(self) -> list[CycleEntry]:
+        """The rotation, normalised.
+
+        Tolerates a plain list of map names, which is both what older profiles
+        stored and the obvious thing for calling code to assign.
+        """
+        return [CycleEntry.from_any(e) for e in self.mapcycle]
+
+    def cycle_map_names(self) -> list[str]:
+        """Just the map names, in rotation order."""
+        return [e.map_name for e in self.cycle_entries()]
+
     @property
     def gametype(self) -> int:
         return int(self.get("g_gametype") or 0)
@@ -129,7 +145,7 @@ class Profile:
             "name": self.name,
             "kind": self.kind,
             "settings": dict(self.settings),
-            "mapcycle": list(self.mapcycle),
+            "mapcycle": [e.to_dict() for e in self.cycle_entries()],
             "start_map": self.start_map,
             "extra_cfg": self.extra_cfg,
             "host": self.host,
@@ -143,7 +159,12 @@ class Profile:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Profile":
         known = {f for f in cls.__dataclass_fields__}
-        profile = cls(**{k: v for k, v in data.items() if k in known})
+        payload = {k: v for k, v in data.items() if k in known}
+        # Older profiles stored the rotation as a plain list of map names.
+        payload["mapcycle"] = [
+            CycleEntry.from_any(e) for e in payload.get("mapcycle", [])
+        ]
+        profile = cls(**payload)
 
         # Earlier versions stored the generated download URL in the settings.
         # That address went stale as soon as the machine's address changed or
@@ -238,7 +259,7 @@ class Profile:
         if private and not self.get("sv_privatePassword"):
             issues.append("Private slots are reserved but no private password is set.")
 
-        if self.mapcycle and self.start_map not in self.mapcycle:
+        if self.mapcycle and self.start_map not in self.cycle_map_names():
             issues.append(
                 f"Start map {self.start_map} is not in the map cycle; "
                 "the rotation will jump elsewhere after the first map."
@@ -356,8 +377,8 @@ def default_profile(name: str = "My Server", installed_maps: list[str] | None = 
     profile = Profile(name=name)
     profile.set("sv_hostname", name)
     rotation = [m for m in (installed_maps or []) if m in _STOCK_ROTATION]
-    profile.mapcycle = rotation or list(_STOCK_ROTATION)
-    profile.start_map = profile.mapcycle[0] if profile.mapcycle else "ut4_casa"
+    profile.mapcycle = [CycleEntry(m) for m in (rotation or list(_STOCK_ROTATION))]
+    profile.start_map = profile.mapcycle[0].map_name if profile.mapcycle else "ut4_casa"
     return profile
 
 

@@ -208,7 +208,7 @@ def test_profile_json_round_trip():
     restored = Profile.from_dict(p.to_dict())
     assert restored.name == "Test"
     assert restored.gametype == cvars.BOMB
-    assert restored.mapcycle == ["ut4_casa"]
+    assert restored.cycle_map_names() == ["ut4_casa"]
 
 
 def test_import_cfg_reads_settings_and_start_map():
@@ -320,3 +320,31 @@ def test_warns_when_custom_maps_have_no_download_source():
     p.dl_enabled = False
     p.set("sv_dlURL", "maps.example.org/urt")
     assert not any("custom map" in i for i in p.problems(custom_maps=2))
+
+
+# -- Per-map gametype in the rotation ----------------------------------------
+
+def test_cycle_entries_tolerate_plain_names():
+    """Older profiles stored names, and assigning names is the obvious thing."""
+    p = Profile()
+    p.mapcycle = ["ut4_casa", "ut4_abbey"]
+    assert p.cycle_map_names() == ["ut4_casa", "ut4_abbey"]
+    assert all(e.gametype is None for e in p.cycle_entries())
+
+
+def test_cycle_entry_round_trips_through_json():
+    from utsm.model.maps import CycleEntry
+    p = Profile()
+    p.mapcycle = [CycleEntry("ut4_casa", cvars.BOMB), CycleEntry("ut4_abbey")]
+    restored = Profile.from_dict(p.to_dict())
+    assert restored.mapcycle[0] == CycleEntry("ut4_casa", cvars.BOMB)
+    assert restored.mapcycle[1].gametype is None
+
+
+def test_cycle_entry_from_any_passes_an_entry_through():
+    """Re-normalising an entry must not stringify it."""
+    from utsm.model.maps import CycleEntry
+    entry = CycleEntry("ut4_casa", 8)
+    assert CycleEntry.from_any(entry) is entry
+    assert CycleEntry.from_any("ut4_abbey") == CycleEntry("ut4_abbey", None)
+    assert CycleEntry.from_any({"map": "ut4_x", "gametype": 4}) == CycleEntry("ut4_x", 4)
