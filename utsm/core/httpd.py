@@ -20,9 +20,11 @@ filename.
 
 from __future__ import annotations
 
+import re
 import socket
 import sys
 import threading
+import zipfile
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -89,6 +91,62 @@ def port_available(port: int, host: str = "0.0.0.0") -> bool:
         sock.close()
 
 
+_BSP_ENTRY = re.compile(r"^maps/([^/]+)\.bsp$", re.IGNORECASE)
+
+
+class MapIndex:
+    """Maps a map name to the .pk3 that contains it.
+
+    A client asks for a pack by the *map* name, not by the pack's filename --
+    ``server_example.cfg`` states it directly: "The client will try to download
+    <sv_dlURL>/q3ut4/mapname.pk3". Map packs are very often named something else
+    (``ut4_mymap_v2.pk3``, ``..._autopacked.pk3``, a pack holding several maps),
+    and then the request 404s and the player is told only that the .bsp is
+    missing.
+
+    Indexing what each pack actually contains lets the same file be served under
+    either name, so the pack does not have to be renamed to work.
+    """
+
+    def __init__(self, root: Path):
+        self.root = Path(root)
+        self._index: dict[str, Path] = {}
+        self._stamp: tuple | None = None
+
+    def _signature(self) -> tuple:
+        """Cheap fingerprint of the directory, to avoid rescanning every miss."""
+        entries = []
+        for pk3 in sorted(self.root.rglob("*.pk3")):
+            try:
+                stat = pk3.stat()
+            except OSError:
+                continue
+            entries.append((str(pk3), stat.st_mtime_ns, stat.st_size))
+        return tuple(entries)
+
+    def refresh(self, force: bool = False) -> None:
+        signature = self._signature()
+        if not force and signature == self._stamp:
+            return
+        index: dict[str, Path] = {}
+        for pk3 in sorted(self.root.rglob("*.pk3")):
+            try:
+                with zipfile.ZipFile(pk3) as archive:
+                    names = archive.namelist()
+            except (zipfile.BadZipFile, OSError):
+                continue
+            for entry in names:
+                match = _BSP_ENTRY.match(entry)
+                if match:
+                    index.setdefault(match.group(1).lower(), pk3)
+        self._index = index
+        self._stamp = signature
+
+    def lookup(self, map_name: str) -> Path | None:
+        self.refresh()
+        return self._index.get(map_name.strip().lower())
+
+
 class _Pk3Handler(BaseHTTPRequestHandler):
     """Serves .pk3 files out of one directory, and nothing else."""
 
@@ -99,6 +157,7 @@ class _Pk3Handler(BaseHTTPRequestHandler):
     # Injected by the owning server.
     root: Path
     log_line = None
+    map_index: MapIndex | None = None
 
     def do_GET(self) -> None:  # noqa: N802 - http.server naming
         self._serve(send_body=True)
@@ -125,9 +184,19 @@ class _Pk3Handler(BaseHTTPRequestHandler):
         # Containment check, so "../" or an absolute path cannot escape.
         if not candidate.is_relative_to(root):
             return None
-        if not candidate.is_file():
-            return None
-        return candidate
+        if candidate.is_file():
+            return candidate
+
+        # No file of that name. The client asks by map name, which is often not
+        # what the pack is called, so look for a pack containing that map.
+        if self.map_index is not None:
+            alias = self.map_index.lookup(Path(raw).stem)
+            if alias is not None:
+                resolved = alias.resolve()
+                if resolved.is_relative_to(root) and resolved.is_file():
+                    self._note(f"serving {resolved.name} as {Path(raw).name}")
+                    return resolved
+        return None
 
     # -- Serving ------------------------------------------------------------
 
@@ -276,6 +345,7 @@ class DownloadServer(QObject):
             (_Pk3Handler,),
             {
                 "root": root,
+                "map_index": MapIndex(root),
                 "log_line": staticmethod(lambda message: self.activity.emit(message)),
             },
         )

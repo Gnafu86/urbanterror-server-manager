@@ -267,3 +267,98 @@ def test_remove_pk3_refuses_other_files(tmp_path):
     with pytest.raises(maps.MapInstallError):
         maps.remove_pk3(victim)
     assert victim.exists()
+
+
+# -- Serving a pack under the map name a client asks for ----------------------
+
+def test_serves_a_pack_under_the_map_name(app, tmp_path):
+    """Clients request <dlURL>/q3ut4/<mapname>.pk3, not the pack's filename.
+
+    server_example.cfg states it directly, and packs are routinely named
+    something else -- ut4_map_v2.pk3, ..._autopacked.pk3, a multi-map pack.
+    Without this the request 404s and the player is told only that the .bsp is
+    missing.
+    """
+    root = tmp_path / "profile"
+    mod = root / "q3ut4"
+    make_pk3(mod / "custommap_autopacked.pk3", ("ut4_custommap",))
+
+    server = httpd.DownloadServer()
+    port = free_port()
+    assert server.start(root, port)
+    try:
+        by_map = fetch(port, "/q3ut4/ut4_custommap.pk3")
+        assert by_map.status == 200
+        expected = (mod / "custommap_autopacked.pk3").read_bytes()
+        assert by_map.read() == expected
+
+        # The real filename keeps working too.
+        assert fetch(port, "/q3ut4/custommap_autopacked.pk3").status == 200
+    finally:
+        server.stop()
+
+
+def test_multi_map_pack_is_served_under_each_map_name(app, tmp_path):
+    root = tmp_path / "profile"
+    make_pk3(root / "q3ut4" / "winter_pack.pk3", ("ut4_frost", "ut4_icebreak"))
+
+    server = httpd.DownloadServer()
+    port = free_port()
+    assert server.start(root, port)
+    try:
+        for name in ("ut4_frost", "ut4_icebreak"):
+            assert fetch(port, f"/q3ut4/{name}.pk3").status == 200, name
+    finally:
+        server.stop()
+
+
+def test_map_name_alias_does_not_weaken_the_extension_rule(app, tmp_path):
+    """The alias must not become a way to reach non-.pk3 files."""
+    root = tmp_path / "profile"
+    mod = root / "q3ut4"
+    make_pk3(mod / "pack.pk3", ("ut4_alias",))
+    (mod / "utsm_secret.cfg").write_text('set rconpassword "nope"', encoding="utf-8")
+
+    server = httpd.DownloadServer()
+    port = free_port()
+    assert server.start(root, port)
+    try:
+        for path in ("/q3ut4/utsm_secret.cfg", "/q3ut4/ut4_alias.cfg", "/q3ut4/ut4_alias"):
+            with pytest.raises(urllib.error.HTTPError) as exc:
+                fetch(port, path)
+            assert exc.value.code == 404, path
+    finally:
+        server.stop()
+
+
+def test_unknown_map_name_is_still_a_404(app, tmp_path):
+    root = tmp_path / "profile"
+    make_pk3(root / "q3ut4" / "pack.pk3", ("ut4_known",))
+    server = httpd.DownloadServer()
+    port = free_port()
+    assert server.start(root, port)
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            fetch(port, "/q3ut4/ut4_unknown.pk3")
+        assert exc.value.code == 404
+    finally:
+        server.stop()
+
+
+def test_map_index_picks_up_a_pack_added_later(app, tmp_path):
+    """Maps are added while the server is running."""
+    root = tmp_path / "profile"
+    mod = root / "q3ut4"
+    mod.mkdir(parents=True)
+
+    server = httpd.DownloadServer()
+    port = free_port()
+    assert server.start(root, port)
+    try:
+        with pytest.raises(urllib.error.HTTPError):
+            fetch(port, "/q3ut4/ut4_late.pk3")
+
+        make_pk3(mod / "late_pack.pk3", ("ut4_late",))
+        assert fetch(port, "/q3ut4/ut4_late.pk3").status == 200
+    finally:
+        server.stop()
