@@ -18,12 +18,15 @@ from pathlib import Path
 
 _BSP = re.compile(r"^maps/([^/]+)\.bsp$", re.IGNORECASE)
 
-#: Entries that are .bsp files but not playable maps: entity definition packs
-#: and leftover developer test rooms shipped inside the official pk3s.
+#: Entries that are .bsp files but not playable maps. Only content shipped
+#: inside the official pk3s belongs here: ``ut4_jumpents`` is an entity
+#: definition pack that every installation carries.
+#:
+#: Nothing derived from one machine's downloaded maps belongs here. An earlier
+#: version listed two names found in a particular user's download folder, which
+#: would have hidden those maps from anyone else who legitimately had them.
 _NOT_PLAYABLE = frozenset({
     "ut4_jumpents",
-    "ut4_testmap_a",
-    "ut4_testmap_b",
 })
 
 
