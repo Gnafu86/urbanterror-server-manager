@@ -575,7 +575,11 @@ class MainWindow(QMainWindow):
         return server
 
     def _start_download_server(self, profile: Profile) -> bool:
-        """Bring up the map download server and point sv_dlURL at it."""
+        """Bring up the map download server.
+
+        ``sv_dlURL`` is not written to the profile here: it is generated into
+        the config at launch, so it can never outlive the server it points at.
+        """
         server = self._download_server_for(profile)
         if server.is_running:
             return True
@@ -584,15 +588,31 @@ class MainWindow(QMainWindow):
         if not server.start(root, profile.dl_port):
             return False
 
-        url = f"http://{profile.dl_host or httpd.local_ip()}:{server.port}"
-        profile.set("sv_dlURL", url)
-        self._save()
-
+        url = cfgwriter.download_url(profile)
         if self._current is profile:
             self._downloads.set_server_state(True, server.port)
             self._downloads.log_activity(f"Serving {root}/q3ut4 at {url}")
         self.statusBar().showMessage(f"Map downloads served at {url}", 8000)
         return True
+
+    def _sync_download_server(self, profile: Profile) -> None:
+        """Make the download server match what the game server is doing.
+
+        Driven by state rather than by the Start button, because a restart goes
+        through the supervisor directly and never passes back through here.
+        """
+        supervisor = self.supervisors.get(profile.id)
+        wanted = profile.dl_enabled and (
+            self._state_of(profile).is_active
+            or bool(supervisor and supervisor.is_restarting)
+        )
+        server = self.download_servers.get(profile.id)
+        running = bool(server and server.is_running)
+
+        if wanted and not running:
+            self._start_download_server(profile)
+        elif running and not wanted:
+            self._stop_download_server(profile)
 
     def _stop_download_server(self, profile: Profile) -> None:
         server = self.download_servers.get(profile.id)
@@ -606,10 +626,11 @@ class MainWindow(QMainWindow):
     def _on_download_toggled(self, enabled: bool) -> None:
         if not self._current:
             return
-        if enabled:
-            self._start_download_server(self._current)
+        if enabled and not self._state_of(self._current).is_active:
+            # Nothing to serve yet; it comes up with the game server.
+            self._downloads.set_server_state(False)
         else:
-            self._stop_download_server(self._current)
+            self._sync_download_server(self._current)
         self._save()
 
     def _on_download_settings_changed(self) -> None:
@@ -658,7 +679,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        problems = self._current.problems()
+        custom = len(maps.list_custom(paths.profile_mod_dir(self._current.id)))
+        problems = self._current.problems(custom_maps=custom)
         conflicts = self.store.port_conflicts().get(self._current.net_port, [])
         running_on_port = [
             p.name for p in self.store.profiles
@@ -682,8 +704,6 @@ class MainWindow(QMainWindow):
         if problems and not self._confirm_problems(problems):
             return
 
-        # The download server has to come up first: starting it is what sets
-        # sv_dlURL, and the game config is generated during the next call.
         if self._current.dl_enabled:
             self._start_download_server(self._current)
 
@@ -706,7 +726,8 @@ class MainWindow(QMainWindow):
     def _check_configuration(self) -> None:
         if not self._current:
             return
-        problems = self._current.problems()
+        custom = len(maps.list_custom(paths.profile_mod_dir(self._current.id)))
+        problems = self._current.problems(custom_maps=custom)
         if not problems:
             QMessageBox.information(
                 self, "Configuration", "No problems found with this configuration."
@@ -756,10 +777,11 @@ class MainWindow(QMainWindow):
         self._refresh_profile_list()
 
         # The download server exists to serve a running game server, so it
-        # follows the game server down rather than lingering.
+        # tracks the game server's state -- including staying up across a
+        # restart, which passes through STOPPED on its way back.
         profile = self.store.by_id(profile_id)
-        if profile and self._state_of(profile) in (ServerState.STOPPED, ServerState.CRASHED):
-            self._stop_download_server(profile)
+        if profile:
+            self._sync_download_server(profile)
 
         if self._current and self._current.id == profile_id:
             self._update_controls()

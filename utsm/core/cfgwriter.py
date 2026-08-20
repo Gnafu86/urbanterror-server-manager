@@ -21,6 +21,7 @@ from pathlib import Path
 from .. import paths
 from ..model import cvars, maps
 from ..model.profile import Profile
+from .httpd import local_ip
 
 #: Characters that would break out of a quoted config value.
 _UNSAFE = str.maketrans({'"': "'", "\n": " ", "\r": " ", ";": ","})
@@ -48,8 +49,15 @@ def cvar_token(name: str) -> str:
     return f'"{name}"' if name != name.strip() or " " in name else name
 
 
-def _group_order() -> list[str]:
-    return [g.key for g in cvars.GROUPS]
+def download_url(profile: Profile) -> str:
+    """The ``sv_dlURL`` for a profile using the built-in download server.
+
+    Computed here rather than stored on the profile. A stored URL goes stale the
+    moment the machine's address changes or the download server stops, and the
+    server would keep advertising an address nothing answers on -- which looks
+    to a joining player exactly like a broken custom map.
+    """
+    return f"http://{profile.dl_host or local_ip()}:{profile.dl_port}"
 
 
 def render_cfg(profile: Profile) -> str:
@@ -68,7 +76,10 @@ def render_cfg(profile: Profile) -> str:
 
         body: list[str] = []
         for cvar in entries:
-            value = cvar.to_cfg_value(profile.get(cvar.name))
+            if cvar.name == "sv_dlURL" and profile.dl_enabled:
+                value = download_url(profile)
+            else:
+                value = cvar.to_cfg_value(profile.get(cvar.name))
             body.append(f'{cvar.setter} {cvar_token(cvar.name)} "{sanitise(value)}"')
 
         lines.append("")

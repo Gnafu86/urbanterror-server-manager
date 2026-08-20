@@ -264,6 +264,64 @@ def test_custom_map_download_chain(profile, tmp_path):
         server.wait(timeout=10)
 
 
+def test_download_url_is_generated_not_stored(tmp_path, monkeypatch):
+    """A stored URL outlives the server it points at.
+
+    The failure it caused: the download server stopped, sv_dlURL kept being
+    advertised, and joining players saw a missing map with no explanation.
+    """
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+    p = Profile()
+    p.dl_enabled = True
+    p.dl_host = "play.example.com"
+    p.dl_port = 8123
+
+    line = next(l for l in cfgwriter.render_cfg(p).splitlines() if "sv_dlURL" in l)
+    assert line == 'sets sv_dlURL "http://play.example.com:8123"'
+    # Nothing was written back to the profile.
+    assert "sv_dlURL" not in p.settings
+
+
+def test_download_url_follows_a_changed_port(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+    p = Profile()
+    p.dl_enabled = True
+    p.dl_host = "example.com"
+    p.dl_port = 8000
+    assert 'http://example.com:8000' in cfgwriter.render_cfg(p)
+    p.dl_port = 9999
+    assert 'http://example.com:9999' in cfgwriter.render_cfg(p)
+
+
+def test_manual_download_url_is_kept_when_builtin_server_is_off(tmp_path, monkeypatch):
+    """Using an external web host must still work."""
+    monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+    p = Profile()
+    p.dl_enabled = False
+    p.set("sv_dlURL", "maps.example.org/urt")
+    line = next(l for l in cfgwriter.render_cfg(p).splitlines() if "sv_dlURL" in l)
+    assert line == 'sets sv_dlURL "maps.example.org/urt"'
+
+
+def test_stale_download_url_is_dropped_on_load():
+    """Profiles written by earlier versions carry a stored URL."""
+    stored = {
+        "id": "abc", "name": "Old", "dl_enabled": True, "dl_port": 8000,
+        "settings": {"sv_dlURL": "http://192.0.2.10:8000", "g_gravity": 400},
+    }
+    p = Profile.from_dict(stored)
+    assert "sv_dlURL" not in p.settings, "the stale URL must not survive"
+    assert p.get("g_gravity") == 400, "other settings are untouched"
+
+
+def test_stored_download_url_kept_when_builtin_server_is_off():
+    stored = {
+        "id": "abc", "name": "Old", "dl_enabled": False,
+        "settings": {"sv_dlURL": "maps.example.org"},
+    }
+    assert Profile.from_dict(stored).get("sv_dlURL") == "maps.example.org"
+
+
 @NEEDS_GAME
 def test_status_query_reports_map_change(profile):
     profile.set("net_port", TEST_PORT + 2)

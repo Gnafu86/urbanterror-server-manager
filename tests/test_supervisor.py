@@ -125,6 +125,33 @@ def test_restart_comes_back_up(app, supervisor, make_profile):
 
 
 @NEEDS_GAME
+def test_restart_is_distinguishable_from_a_stop(app, supervisor, make_profile):
+    """A restart passes through STOPPED on its way back up.
+
+    Anything tied to the server's lifetime -- the map download server, in
+    practice -- has to tell that apart from a real stop, or it tears itself
+    down mid-restart and never returns.
+    """
+    seen: list[tuple[str, bool]] = []
+    supervisor.state_changed.connect(
+        lambda s: seen.append((s.value, supervisor.is_restarting))
+    )
+
+    supervisor.start(make_profile())
+    assert spin(app, lambda: supervisor.state is ServerState.RUNNING)
+    assert supervisor.is_restarting is False
+
+    seen.clear()
+    supervisor.restart()
+    assert spin(app, lambda: supervisor.state is ServerState.RUNNING and not supervisor.is_restarting)
+
+    stopped = [flag for state, flag in seen if state == "stopped"]
+    assert stopped, "a restart should pass through the stopped state"
+    assert all(stopped), "is_restarting must be set while passing through stopped"
+    assert supervisor.is_restarting is False, "cleared once back up"
+
+
+@NEEDS_GAME
 def test_stop_and_wait_leaves_no_orphan(app, make_profile):
     """Servers are children of the manager and must not outlive it."""
     profile = make_profile()

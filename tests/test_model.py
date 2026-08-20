@@ -303,3 +303,20 @@ def test_store_detects_port_conflicts():
     store.add(a)
     store.add(b)
     assert 27960 in store.port_conflicts()
+
+
+def test_warns_when_custom_maps_have_no_download_source():
+    """The failure this prevents: players simply cannot join, with no clue why."""
+    p = Profile()
+    assert not any("custom map" in i for i in p.problems(custom_maps=0))
+
+    issues = p.problems(custom_maps=2)
+    assert any("custom map" in i and "download" in i for i in issues)
+
+    # A download source of either kind clears it.
+    p.dl_enabled = True
+    assert not any("custom map" in i for i in p.problems(custom_maps=2))
+
+    p.dl_enabled = False
+    p.set("sv_dlURL", "maps.example.org/urt")
+    assert not any("custom map" in i for i in p.problems(custom_maps=2))

@@ -139,6 +139,16 @@ class ServerSupervisor(QObject):
     def is_running(self) -> bool:
         return self._state is ServerState.RUNNING
 
+    @property
+    def is_restarting(self) -> bool:
+        """True between a restart's stop and the start that follows it.
+
+        A restart passes through STOPPED on its way back up. Anything tied to
+        the server's lifetime needs to tell that apart from a real stop, or it
+        tears itself down mid-restart and never comes back.
+        """
+        return self._restarting
+
     def _set_state(self, state: ServerState) -> None:
         if state is not self._state:
             self._state = state

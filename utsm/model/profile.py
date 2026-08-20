@@ -143,7 +143,17 @@ class Profile:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Profile":
         known = {f for f in cls.__dataclass_fields__}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        profile = cls(**{k: v for k, v in data.items() if k in known})
+
+        # Earlier versions stored the generated download URL in the settings.
+        # That address went stale as soon as the machine's address changed or
+        # the download server stopped, and the game server carried on
+        # advertising it -- which a joining player sees as a missing map. It is
+        # generated at launch now, so any stored copy is dropped.
+        if profile.dl_enabled:
+            profile.settings.pop("sv_dlURL", None)
+
+        return profile
 
     # -- Import from an existing server.cfg ---------------------------------
 
@@ -192,9 +202,25 @@ class Profile:
 
     # -- Validation ---------------------------------------------------------
 
-    def problems(self) -> list[str]:
-        """Configuration issues worth warning about before launch."""
+    def problems(self, custom_maps: int = 0) -> list[str]:
+        """Configuration issues worth warning about before launch.
+
+        ``custom_maps`` is the number of custom .pk3 packs the profile carries;
+        the caller supplies it because the model does not read the filesystem.
+        """
         issues: list[str] = []
+
+        if custom_maps and not self.dl_enabled:
+            url = str(self.get("sv_dlURL") or "").strip()
+            default_url = cvars.get("sv_dlURL").default
+            if not url or url == default_url:
+                issues.append(
+                    f"This server carries {custom_maps} custom map pack"
+                    f"{'s' if custom_maps != 1 else ''}, but has no download source "
+                    "for them. Players who do not already have the map will fail to "
+                    "join. Turn on the download server under Custom Maps, or set a "
+                    "Download URL pointing at a host that has the files."
+                )
 
         port = self.net_port
         if not 1024 <= port <= 65535:

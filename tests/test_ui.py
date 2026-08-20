@@ -367,3 +367,103 @@ def test_every_registry_option_is_reachable_in_some_gametype(window):
 
     missing = {c.name for c in cvars.REGISTRY} - reachable
     assert not missing, f"options with no GUI control: {sorted(missing)}"
+
+
+# -- Download server lifecycle -----------------------------------------------
+
+def _listening(port: int) -> bool:
+    import socket
+    s = socket.socket()
+    s.settimeout(0.4)
+    try:
+        s.connect(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def test_download_server_survives_a_server_restart(app, window):
+    """The regression: restarting the game server killed the download server.
+
+    A restart goes through the supervisor directly and never passes back
+    through the Start button, so the download server was stopped on the way
+    through STOPPED and never brought back. The game server carried on
+    advertising sv_dlURL, and joining players saw a missing map.
+    """
+    import time
+    from utsm.core.supervisor import ServerState
+
+    profile = window._current
+    profile.set("net_port", 27992)
+    profile.set("dedicated", 1)
+    profile.set("sv_pure", False)
+    profile.dl_enabled = True
+    profile.dl_port = 8057
+    profile.start_map = "ut4_casa"
+    profile.mapcycle = ["ut4_casa"]
+    window._load_profile(profile)
+
+    def spin(pred, timeout=60.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            app.processEvents()
+            time.sleep(0.05)
+            if pred():
+                return True
+        return False
+
+    try:
+        window._start()
+        assert spin(lambda: window._state_of(profile) is ServerState.RUNNING)
+        assert _listening(8057), "download server should be up with the game server"
+
+        window._restart()
+        assert spin(lambda: window._state_of(profile) is ServerState.RUNNING
+                    and not window.supervisors[profile.id].is_restarting)
+        app.processEvents()
+        assert _listening(8057), "download server must survive a restart"
+    finally:
+        for s in window.download_servers.values():
+            s.stop()
+        for s in window.supervisors.values():
+            s.stop_and_wait()
+
+
+def test_download_server_stops_with_the_game_server(app, window):
+    import time
+    from utsm.core.supervisor import ServerState
+
+    profile = window._current
+    profile.set("net_port", 27991)
+    profile.set("dedicated", 1)
+    profile.set("sv_pure", False)
+    profile.dl_enabled = True
+    profile.dl_port = 8058
+    profile.start_map = "ut4_casa"
+    window._load_profile(profile)
+
+    def spin(pred, timeout=60.0):
+        end = time.time() + timeout
+        while time.time() < end:
+            app.processEvents()
+            time.sleep(0.05)
+            if pred():
+                return True
+        return False
+
+    try:
+        window._start()
+        assert spin(lambda: window._state_of(profile) is ServerState.RUNNING)
+        assert _listening(8058)
+
+        window._stop()
+        assert spin(lambda: window._state_of(profile) is ServerState.STOPPED)
+        app.processEvents()
+        assert not _listening(8058), "download server should not outlive the game server"
+    finally:
+        for s in window.download_servers.values():
+            s.stop()
+        for s in window.supervisors.values():
+            s.stop_and_wait()
