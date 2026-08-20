@@ -1,0 +1,202 @@
+"""Discovering which maps a server can actually load.
+
+Maps live as ``maps/<name>.bsp`` inside ``.pk3`` archives, which are ordinary
+zip files. Scanning the archives is the only reliable way to know what is
+installed, since there is no manifest.
+
+Both the install's ``q3ut4`` directory and a profile's own ``fs_homepath`` are
+scanned, because a profile may carry extra maps the base install does not have.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import zipfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+_BSP = re.compile(r"^maps/([^/]+)\.bsp$", re.IGNORECASE)
+
+#: Entries that are .bsp files but not playable maps: entity definition packs
+#: and leftover developer test rooms shipped inside the official pk3s.
+_NOT_PLAYABLE = frozenset({
+    "ut4_jumpents",
+    "ut4_testmap_a",
+    "ut4_testmap_b",
+})
+
+
+@dataclass(frozen=True)
+class GameMap:
+    name: str
+    source: Path
+
+    @property
+    def display_name(self) -> str:
+        """``ut4_casa`` reads as ``Casa``."""
+        stem = self.name[4:] if self.name.lower().startswith("ut4_") else self.name
+        return stem.replace("_", " ").title()
+
+
+def scan_pk3(path: Path) -> set[str]:
+    """Map names inside one .pk3, or an empty set if it cannot be read."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = archive.namelist()
+    except (zipfile.BadZipFile, OSError):
+        return set()
+    found = set()
+    for entry in names:
+        match = _BSP.match(entry)
+        if match:
+            found.add(match.group(1).lower())
+    return found
+
+
+def discover(*roots: Path, include_unplayable: bool = False) -> list[GameMap]:
+    """Every map found under the given directories, sorted by name.
+
+    Later roots win on name collisions, matching the engine's own precedence
+    where a profile's homepath overrides the base install.
+    """
+    found: dict[str, Path] = {}
+    for root in roots:
+        if root is None or not Path(root).is_dir():
+            continue
+        for pk3 in sorted(Path(root).rglob("*.pk3")):
+            for name in scan_pk3(pk3):
+                if not include_unplayable and name in _NOT_PLAYABLE:
+                    continue
+                found[name] = pk3
+    return [GameMap(name, src) for name, src in sorted(found.items())]
+
+
+def names(maps: list[GameMap]) -> list[str]:
+    return [m.name for m in maps]
+
+
+# -- Map cycle file ----------------------------------------------------------
+#
+# The cycle file is one map name per line. The engine also supports per-map
+# setting blocks in braces; those are preserved verbatim rather than parsed,
+# so hand-written cycles survive a round-trip through this editor.
+
+
+def parse_cycle(text: str) -> list[str]:
+    """Map names from a mapcycle file, ignoring comments and setting blocks."""
+    out: list[str] = []
+    depth = 0
+    for raw in text.replace("\r", "").splitlines():
+        line = raw.split("//")[0].strip()
+        if not line:
+            continue
+        depth += line.count("{") - line.count("}")
+        if depth > 0 or line in ("{", "}"):
+            continue
+        token = line.split()[0]
+        if token and not token.startswith(("{", "}")):
+            out.append(token)
+    return out
+
+
+def render_cycle(map_names: list[str]) -> str:
+    """A mapcycle file body for the given rotation."""
+    if not map_names:
+        return ""
+    return "\n".join(map_names) + "\n"
+
+
+# -- Custom map packs --------------------------------------------------------
+#
+# Custom maps are .pk3 files added to a profile's own q3ut4 directory. Putting
+# them there does two jobs at once: the game server loads them from its
+# fs_homepath, and the download server offers them to joining clients from the
+# same path.
+
+
+@dataclass(frozen=True)
+class CustomPk3:
+    """A .pk3 the user added to a profile."""
+
+    path: Path
+    maps: tuple[str, ...] = ()
+
+    @property
+    def name(self) -> str:
+        return self.path.name
+
+    @property
+    def size(self) -> int:
+        try:
+            return self.path.stat().st_size
+        except OSError:
+            return 0
+
+    @property
+    def size_label(self) -> str:
+        size = float(self.size)
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024 or unit == "GB":
+                return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} GB"
+
+    @property
+    def download_path(self) -> str:
+        """Where a client will ask for this pack, relative to ``sv_dlURL``."""
+        return f"/{self.path.parent.name}/{self.path.name}"
+
+
+def list_custom(mod_dir: Path) -> list[CustomPk3]:
+    """Every .pk3 a profile carries of its own, newest name order."""
+    mod_dir = Path(mod_dir)
+    if not mod_dir.is_dir():
+        return []
+    packs = []
+    for pk3 in sorted(mod_dir.glob("*.pk3")):
+        packs.append(CustomPk3(pk3, tuple(sorted(scan_pk3(pk3)))))
+    return packs
+
+
+class MapInstallError(Exception):
+    """A .pk3 could not be added."""
+
+
+def install_pk3(source: Path, mod_dir: Path, overwrite: bool = False) -> Path:
+    """Copy a .pk3 into a profile's mod directory.
+
+    The name is preserved, because the client asks for the pak by the exact
+    filename the server advertises. Renaming it here would make the download
+    404 for every joining player.
+    """
+    source = Path(source)
+    mod_dir = Path(mod_dir)
+
+    if source.suffix.lower() != ".pk3":
+        raise MapInstallError(f"{source.name} is not a .pk3 file.")
+    if not source.is_file():
+        raise MapInstallError(f"{source} does not exist.")
+    if not zipfile.is_zipfile(source):
+        raise MapInstallError(
+            f"{source.name} is not a valid .pk3 archive (a .pk3 is a zip file)."
+        )
+
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    target = mod_dir / source.name
+
+    if target.exists() and not overwrite:
+        raise MapInstallError(f"{source.name} is already installed.")
+    if target.resolve() == source.resolve():
+        return target
+
+    shutil.copy2(source, target)
+    return target
+
+
+def remove_pk3(path: Path) -> None:
+    """Delete a custom .pk3 from a profile."""
+    path = Path(path)
+    if path.suffix.lower() != ".pk3":
+        raise MapInstallError("Refusing to delete something that is not a .pk3.")
+    path.unlink(missing_ok=True)
