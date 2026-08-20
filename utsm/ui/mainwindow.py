@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import paths
-from ..core import cfgwriter, httpd
+from ..core import cfgwriter, httpd, query
 from ..core.channel import ChannelError, ControlChannel, NullChannel, RconChannel
 from ..core.httpd import DownloadServer
 from ..core.supervisor import ServerState, ServerSupervisor
@@ -773,6 +773,40 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message, 12000)
         self._console.note(message)
 
+    def _verify_downloads(self, profile: Profile) -> None:
+        """Check a running server really accepts downloads, and say so if not.
+
+        Configuring a download source is not enough on its own: the server may
+        not keep ``sv_allowdownload``, and the *client* has its own
+        ``cl_allowdownload`` which is off by default in Urban Terror. Either one
+        leaves a player unable to join a custom map, with the client reporting
+        only a missing .bsp, so both are surfaced here rather than left to be
+        discovered the hard way.
+        """
+        if not profile.dl_enabled:
+            return
+        try:
+            info = query.get_status("127.0.0.1", profile.net_port, timeout=1.5).info
+        except query.QueryError:
+            return
+
+        if info.get("sv_allowdownload") == "0":
+            self._downloads.log_activity(
+                "Warning: the server reports sv_allowdownload = 0, so it will refuse "
+                "to serve map downloads. This build does not always keep the "
+                "configured value."
+            )
+            self.statusBar().showMessage(
+                "Server reports downloads disabled — players may not be able to "
+                "join on a custom map.", 15000
+            )
+
+        self._downloads.log_activity(
+            "Note: players also need cl_allowdownload set to 1 in their own game. "
+            "Urban Terror ships with it off, and a client with it off reports a "
+            "missing .bsp instead of downloading the map."
+        )
+
     def _on_state_changed(self, profile_id: str) -> None:
         self._refresh_profile_list()
 
@@ -782,6 +816,8 @@ class MainWindow(QMainWindow):
         profile = self.store.by_id(profile_id)
         if profile:
             self._sync_download_server(profile)
+            if self._state_of(profile) is ServerState.RUNNING:
+                QTimer.singleShot(1500, lambda p=profile: self._verify_downloads(p))
 
         if self._current and self._current.id == profile_id:
             self._update_controls()
